@@ -17,6 +17,7 @@ class SpellingTrainerGUI:
         self.words = []
         self.shuffled_words = []
         self.current_word_index = 0
+        self.session_results = []
         self.audio_folder = settings.get('audio_folder', '')
         self.last_words_file = settings.get('last_words_file', '')
 
@@ -113,7 +114,7 @@ class SpellingTrainerGUI:
         tk.Label(self.answer_frame, text="Напишите услышанное слово:", font=("Arial", 12)).pack()
         self.answer_entry = tk.Entry(self.answer_frame, font=("Arial", 16), width=30)
         self.answer_entry.pack(pady=10)
-        self.answer_entry.bind("<Return>", self.check_answer)
+        self.answer_entry.bind("<Return>", lambda e: self.process_and_advance())
 
         # Кнопки управления тренировкой
         self.buttons_frame = tk.Frame(self.training_frame)
@@ -123,14 +124,10 @@ class SpellingTrainerGUI:
                                    command=self.speak_word, font=("Arial", 12), bg="lightblue")
         self.speak_btn.pack(side="left", padx=10)
 
-        self.check_btn = tk.Button(self.buttons_frame, text="✓ Проверить",
-                                   command=self.check_answer, font=("Arial", 12), bg="lightgreen")
-        self.check_btn.pack(side="left", padx=10)
-
-        # Добавим кнопку завершения тестирования
-        self.finish_btn = tk.Button(self.buttons_frame, text="🏁 Завершить тестирование",
-                                   command=self.finish_testing, font=("Arial", 12), bg="orange")
-        self.finish_btn.pack(side="left", padx=10)
+        # Динамическая кнопка для продвижения
+        self.advance_btn = tk.Button(self.buttons_frame, text="➡️ Следующее слово",
+                                     command=self.process_and_advance, font=("Arial", 12), bg="lightblue")
+        self.advance_btn.pack(side="left", padx=10)
 
         # Область результата
         self.result_label = tk.Label(self.training_frame, text="", font=("Arial", 14))
@@ -144,11 +141,6 @@ class SpellingTrainerGUI:
                                     font=("Arial", 10))
         self.stats_label.pack(pady=5)
 
-        # Кнопка показа полной статистики
-        self.show_stats_btn = tk.Button(self.stats_frame, text="📊 Показать полную статистику",
-                                        command=self.show_full_stats, font=("Arial", 10))
-        self.show_stats_btn.pack(pady=5)
-
     def restore_settings(self):
         """Восстанавливает предыдущие настройки"""
         if self.audio_folder:
@@ -157,7 +149,7 @@ class SpellingTrainerGUI:
         # Загружаем последний использованный файл слов, если он существует
         if self.last_words_file and os.path.exists(self.last_words_file):
             try:
-                self.load_words_from_file(self.last_words_file, is_start = True)
+                self.load_words_from_file(self.last_words_file, is_start=True)
             except:
                 # Если не удалось загрузить, используем стандартный список
                 self.words_text.insert("1.0",
@@ -166,7 +158,7 @@ class SpellingTrainerGUI:
             self.words_text.insert("1.0",
                                    "вокзал\nпарашют\nаккомпанемент\nбюллетень\nдеревня\nинтеллигент\nпрофессия\nколлектив\nтерритория\nдискуссия")
 
-    def load_words_from_file(self, filename=None, is_start = False):
+    def load_words_from_file(self, filename=None, is_start=False):
         """Загружает слова из текстового файла"""
         if not filename:
             filename = filedialog.askopenfilename(
@@ -240,25 +232,9 @@ class SpellingTrainerGUI:
             self.folder_path_var.set(folder)
             self.audio_folder = folder
             self.audio_player.set_audio_folder(folder)
-            self.save_settings()
-
-    def show_setup_frame(self):
-        """Показывает фрейм настройки и скрывает фрейм тренировки"""
-        self.training_frame.pack_forget()
-        self.setup_frame.pack(fill="both", expand=True)
-
-    def show_training_frame(self):
-        """Показывает фрейм тренировки и скрывает фрейм настройки"""
-        self.setup_frame.pack_forget()
-        self.training_frame.pack(fill="both", expand=True)
-        self.answer_entry.focus()
 
     def prepare_and_start_training(self):
-        """Подготавливает аудиофайлы и начинает тренировку"""
-        if not self.audio_folder:
-            messagebox.showwarning("Внимание", "Пожалуйста, выберите папку для сохранения аудиофайлов!")
-            return
-
+        """Подготавливает аудиофайлы и запускает тренировку"""
         text = self.words_text.get("1.0", tk.END).strip()
         self.words = [word.strip() for word in text.split('\n') if word.strip()]
 
@@ -314,7 +290,6 @@ class SpellingTrainerGUI:
         # Перемешиваем слова и начинаем тренировку
         self.shuffle_words()
         self.show_training_frame()
-        self.next_word()
 
     def _handle_generation_error(self, error_message):
         """Обрабатывает ошибки генерации"""
@@ -329,13 +304,43 @@ class SpellingTrainerGUI:
         random.shuffle(self.shuffled_words)
         self.current_word_index = 0
         self.words_attempted.clear()  # Сбрасываем отслеживание пройденных слов
+        self.session_results = []
         self.stats_manager.reset_current_session()  # Сбрасываем статистику текущей сессии
+
+    def show_training_frame(self):
+        """Показывает фрейм тренировки"""
+        self.setup_frame.pack_forget()
+        self.training_frame.pack(fill="both", expand=True)
+        self.display_current_word()
+
+    def display_current_word(self):
+        """Отображает текущее слово для тренировки"""
+        if self.current_word_index >= len(self.shuffled_words):
+            self.finish_testing()
+            return
+
+        current_word = self.shuffled_words[self.current_word_index]
+        self.word_info_label.config(
+            text=f"Слово {self.current_word_index + 1} из {len(self.shuffled_words)} (случайный порядок)"
+        )
+        self.current_word_label.config(text="???")
+        self.answer_entry.delete(0, tk.END)
+        self.result_label.config(text="")
+        self.answer_entry.focus()
+        self.update_button()
+        self.speak_word()
+
+    def update_button(self):
+        """Обновляет текст и стиль кнопки продвижения"""
+        if self.current_word_index == len(self.shuffled_words) - 1:
+            self.advance_btn.config(text="🏁 Завершить тестирование", bg="orange")
+        else:
+            self.advance_btn.config(text="➡️ Следующее слово", bg="lightblue")
 
     def speak_word(self):
         """Озвучивает текущее слово"""
-        if not self.shuffled_words:
+        if self.current_word_index >= len(self.shuffled_words):
             return
-
         current_word = self.shuffled_words[self.current_word_index]
         self.audio_player.speak_word(current_word, self.on_audio_error)
 
@@ -344,25 +349,9 @@ class SpellingTrainerGUI:
         self.root.after(0, lambda msg=error_message: messagebox.showerror("Ошибка",
                                                                           f"Не удалось воспроизвести слово: {msg}"))
 
-    def next_word(self):
-        if not self.shuffled_words:
-            return
-
-        self.current_word_index = (self.current_word_index + 1) % len(self.shuffled_words)
-        self.answer_entry.delete(0, tk.END)
-        self.result_label.config(text="")
-
-        # Обновляем информацию о текущем слове
-        self.word_info_label.config(
-            text=f"Слово {self.current_word_index} из {len(self.shuffled_words)} (порядок случайный)"
-        )
-        self.current_word_label.config(text="???")
-
-        self.answer_entry.focus()
-        self.speak_word()
-
-    def check_answer(self, event=None):
-        if not self.shuffled_words:
+    def process_and_advance(self, event=None):
+        """Обрабатывает ввод пользователя и продвигается к следующему слову"""
+        if self.current_word_index >= len(self.shuffled_words):
             return
 
         user_answer = self.answer_entry.get().strip()
@@ -374,27 +363,27 @@ class SpellingTrainerGUI:
 
         is_correct = user_answer.lower() == correct_word.lower()
 
+        # Сохраняем результат сессии
+        self.session_results.append((correct_word, user_answer, is_correct))
+
         if is_correct:
             self.result_label.config(text="Правильно! ✅", fg="green")
         else:
-            self.result_label.config(text=f"Неправильно! ❌\nПравильный ответ: {correct_word}", fg="red")
+            self.result_label.config(text=f"Неправильно! ❌\nПравильное написание: {correct_word}", fg="red")
 
         # Показываем правильное написание
         self.current_word_label.config(text=correct_word)
 
         # Обновляем статистику
-        self.stats_manager.add_attempt(correct_word, is_correct, user_answer.lower())
+        self.stats_manager.add_attempt(correct_word, is_correct)
         self.update_stats_display()
 
         # Отмечаем слово как пройденное
         self.words_attempted.add(correct_word)
 
-        # Проверяем, все ли слова пройдены
-        if len(self.words_attempted) >= len(self.shuffled_words):
-            self.root.after(1000, self.finish_testing)  # Завершаем через секунду
-        else:
-            # Показываем следующее слово
-            self.root.after(1000, self.next_word)  # Задержка 1 секунда перед следующим словом
+        # Продвигаемся дальше
+        self.current_word_index += 1
+        self.root.after(1000, self.display_current_word)  # Задержка для просмотра результата
 
     def update_stats_display(self):
         stats = self.stats_manager.get_stats()
@@ -406,55 +395,47 @@ class SpellingTrainerGUI:
             text=f"Всего попыток: {total}\nПравильных ответов: {correct} ({percentage:.1f}%)"
         )
 
-    def show_full_stats(self):
-        stats_window = tk.Toplevel(self.root)
-        stats_window.title("Полная статистика")
-        stats_window.geometry("500x400")
-
-        text_area = scrolledtext.ScrolledText(stats_window, font=("Arial", 10))
-        text_area.pack(pady=10, padx=10, fill="both", expand=True)
-
-        stats = self.stats_manager.get_stats()
-        stats_text = "СТАТИСТИКА ПО СЛОВАМ:\n\n"
-
-        for word, data in stats['word_stats'].items():
-            attempts = data['attempts']
-            correct = data['correct']
-            percentage = (correct / attempts * 100) if attempts > 0 else 0
-            stats_text += f"{word}: {correct}/{attempts} ({percentage:.1f}%)\n"
-
-        stats_text += f"\nОбщая статистика:\n"
-        stats_text += f"Всего попыток: {stats['total_attempts']}\n"
-        stats_text += f"Правильных ответов: {stats['correct_attempts']}\n"
-        stats_text += f"Сессия начата: {stats['session_start']}\n"
-        stats_text += f"Папка аудиофайлов: {self.audio_folder}"
-
-        text_area.insert("1.0", stats_text)
-        text_area.config(state="disabled")
-
-    def cleanup(self):
-        """Очистка ресурсов"""
-        self.audio_player.cleanup()
-
-    def _retry_testing(self, results_window):
-        """Перезапускает тестирование"""
-        results_window.destroy()
-        self.shuffle_words()
-        self.next_word()
+    def _insert_highlighted_diff(self, text_widget, user_input, correct):
+        """Вставляет неправильное слово с выделением отличий"""
+        i = 0
+        minlen = min(len(user_input), len(correct))
+        while i < minlen:
+            if user_input[i] != correct[i]:
+                start_pos = text_widget.index(tk.END)
+                j = i
+                while j < minlen and user_input[j] != correct[j]:
+                    text_widget.insert(tk.END, user_input[j])
+                    j += 1
+                text_widget.tag_add('diff', start_pos, text_widget.index(tk.END))
+                i = j
+            else:
+                text_widget.insert(tk.END, user_input[i])
+                i += 1
+        # Остаток неправильного слова
+        if len(user_input) > minlen:
+            start_pos = text_widget.index(tk.END)
+            text_widget.insert(tk.END, user_input[minlen:])
+            text_widget.tag_add('diff', start_pos, text_widget.index(tk.END))
+        text_widget.insert(tk.END, " - ")
+        text_widget.insert(tk.END, correct)
+        text_widget.insert(tk.END, "\n")
 
     def finish_testing(self):
         """Завершает тестирование и показывает результаты"""
         if not self.shuffled_words:
             return
 
-        # Получаем статистику ошибок
-        errors = self.stats_manager.get_current_session_errors()
+        # Получаем статистику
         grade = self.stats_manager.calculate_grade()
+        stats = self.stats_manager.get_stats()
+        total_words = len(self.shuffled_words)
+        correct_count = stats['correct_attempts']
+        errors_count = total_words - correct_count
 
         # Создаем окно с результатами
         results_window = tk.Toplevel(self.root)
         results_window.title("Результаты тестирования")
-        results_window.geometry("600x500")
+        results_window.geometry("700x600")
         results_window.resizable(True, True)
 
         # Заголовок с оценкой
@@ -464,37 +445,45 @@ class SpellingTrainerGUI:
                                fg="green" if grade >= 4 else "orange" if grade == 3 else "red")
         grade_label.pack(pady=10)
 
-        # Статистика
-        total_words = len(self.shuffled_words)
-        correct_words = total_words - sum(errors.values())
-        errors_count = sum(errors.values())
-
+        # Общая статистика
         stats_text = f"Всего слов: {total_words}\n"
-        stats_text += f"Правильно: {correct_words}\n"
+        stats_text += f"Правильно: {correct_count}\n"
         stats_text += f"Ошибок: {errors_count}\n"
-        stats_text += f"Процент правильных ответов: {(correct_words / total_words * 100):.1f}%"
+        stats_text += f"Процент правильных ответов: {(correct_count / total_words * 100):.1f}%"
 
         stats_label = tk.Label(results_window, text=stats_text, font=("Arial", 14))
         stats_label.pack(pady=10)
 
-        # Детализация ошибок
-        if errors:
-            errors_frame = tk.LabelFrame(results_window, text="Ошибочные слова", font=("Arial", 12))
-            errors_frame.pack(pady=10, padx=10, fill="both", expand=True)
+        # Неправильные слова
+        incorrect_frame = tk.LabelFrame(results_window, text="Неправильно написанные слова")
+        incorrect_frame.pack(pady=10, padx=10, fill="both", expand=True)
 
-            errors_text = scrolledtext.ScrolledText(errors_frame, font=("Arial", 11))
-            errors_text.pack(pady=5, padx=5, fill="both", expand=True)
+        inc_text = scrolledtext.ScrolledText(incorrect_frame, font=("Arial", 11), wrap=tk.WORD, height=8)
+        inc_text.pack(pady=5, padx=5, fill="both", expand=True)
+        inc_text.tag_config('diff', foreground='red')
 
-            errors_content = "Слова с ошибками:\n\n"
-            for word, error_count in errors.items():
-                errors_content += f"• {word}: {error_count} ошибок\n"
-
-            errors_text.insert("1.0", errors_content)
-            errors_text.config(state="disabled")
+        if errors_count == 0:
+            inc_text.insert(tk.END, "Все слова написаны правильно! 🎉")
         else:
-            no_errors_label = tk.Label(results_window, text="Все слова написаны правильно! 🎉",
-                                       font=("Arial", 14), fg="green")
-            no_errors_label.pack(pady=20)
+            for correct, user, is_c in self.session_results:
+                if not is_c:
+                    self._insert_highlighted_diff(inc_text, user, correct)
+        inc_text.config(state="disabled")
+
+        # Правильные слова
+        correct_frame = tk.LabelFrame(results_window, text="Правильно написанные слова")
+        correct_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+        cor_text = scrolledtext.ScrolledText(correct_frame, font=("Arial", 11), wrap=tk.WORD, height=8)
+        cor_text.pack(pady=5, padx=5, fill="both", expand=True)
+
+        if correct_count == 0:
+            cor_text.insert(tk.END, "Нет правильно написанных слов.")
+        else:
+            for correct, _, is_c in self.session_results:
+                if is_c:
+                    cor_text.insert(tk.END, f"• {correct}\n")
+        cor_text.config(state="disabled")
 
         # Кнопки
         buttons_frame = tk.Frame(results_window)
@@ -514,9 +503,22 @@ class SpellingTrainerGUI:
         results_window.transient(self.root)
         results_window.grab_set()
         results_window.focus_set()
-
-        # Центрируем окно на экране
         results_window.update_idletasks()
         x = (results_window.winfo_screenwidth() - results_window.winfo_width()) // 2
         y = (results_window.winfo_screenheight() - results_window.winfo_height()) // 2
         results_window.geometry(f"+{x}+{y}")
+
+    def _retry_testing(self, results_window):
+        """Перезапускает тестирование"""
+        results_window.destroy()
+        self.shuffle_words()
+        self.display_current_word()
+
+    def show_setup_frame(self):
+        """Показывает фрейм настройки"""
+        self.training_frame.pack_forget()
+        self.setup_frame.pack(fill="both", expand=True)
+
+    def cleanup(self):
+        """Очистка ресурсов"""
+        self.audio_player.cleanup()
